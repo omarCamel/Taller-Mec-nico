@@ -11,6 +11,20 @@ from clientes import (
     registrar_cliente,
 )
 from database import MYSQL_DATABASE, conectar_mysql
+from piezas import (
+    actualizar_pieza,
+    cargar_piezas,
+    eliminar_pieza,
+    pieza_en_existencia,
+    registrar_pieza,
+)
+from reparaciones import (
+    ESTADOS_REPARACION,
+    actualizar_reparacion,
+    cargar_reparaciones,
+    eliminar_reparacion,
+    registrar_reparacion,
+)
 from usuarios import (
     actualizar_usuario,
     autenticar_usuario,
@@ -82,6 +96,40 @@ def inicializar_base_datos():
             CONSTRAINT fk_vehiculo_cliente FOREIGN KEY (cliente_id)
                 REFERENCES clientes(id)
         ) ENGINE=InnoDB""",
+        """CREATE TABLE IF NOT EXISTS piezas (
+            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            nombre VARCHAR(120) NOT NULL,
+            categoria VARCHAR(80) NOT NULL DEFAULT 'General',
+            stock INT NOT NULL DEFAULT 0,
+            precio_unitario DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+            descripcion TEXT NOT NULL,
+            UNIQUE KEY uq_pieza_datos (nombre, categoria)
+        ) ENGINE=InnoDB""",
+        """CREATE TABLE IF NOT EXISTS reparaciones (
+            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            vehiculo_id INT NOT NULL,
+            asunto VARCHAR(255) NOT NULL,
+            fecha_entrada DATE NOT NULL,
+            fecha_salida DATE NULL,
+            pieza_id INT NULL,
+            costo DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+            estado VARCHAR(30) NOT NULL DEFAULT 'Pendiente',
+            CONSTRAINT fk_reparacion_vehiculo FOREIGN KEY (vehiculo_id)
+                REFERENCES vehiculos(id),
+            CONSTRAINT fk_reparacion_pieza FOREIGN KEY (pieza_id)
+                REFERENCES piezas(id)
+        ) ENGINE=InnoDB""",
+        """CREATE TABLE IF NOT EXISTS reparacion_piezas (
+            reparacion_id INT NOT NULL,
+            pieza_id INT NOT NULL,
+            cantidad INT NOT NULL DEFAULT 1,
+            precio_unitario DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+            PRIMARY KEY (reparacion_id, pieza_id),
+            CONSTRAINT fk_reparacion_pieza_reparacion FOREIGN KEY (reparacion_id)
+                REFERENCES reparaciones(id),
+            CONSTRAINT fk_reparacion_pieza_pieza FOREIGN KEY (pieza_id)
+                REFERENCES piezas(id)
+        ) ENGINE=InnoDB""",
     )
     for sentencia in sentencias:
         cursor.execute(sentencia)
@@ -99,6 +147,18 @@ def inicializar_base_datos():
             )
 
     cursor.execute("ALTER TABLE usuarios MODIFY id INT NOT NULL AUTO_INCREMENT")
+    cursor.execute("SHOW COLUMNS FROM reparaciones")
+    columnas_reparaciones = {fila[0].lower() for fila in cursor.fetchall()}
+    for nombre_columna, tipo, valor_predeterminado in (
+        ("asunto", "VARCHAR(255)", "''"),
+        ("fecha_entrada", "DATE", "NULL"),
+        ("fecha_salida", "DATE", "NULL"),
+        ("pieza_id", "INT", "NULL"),
+    ):
+        if nombre_columna not in columnas_reparaciones:
+            cursor.execute(
+                f"ALTER TABLE reparaciones ADD COLUMN {nombre_columna} {tipo} DEFAULT {valor_predeterminado}"
+            )
     conexion.commit()
     cursor.close()
     conexion.close()
@@ -337,8 +397,123 @@ class TallerApp:
         ttk.Button(acciones_vehiculos, text="Borrar", command=self.borrar_vehiculo_form).pack(side="left", padx=3)
         ttk.Button(acciones_vehiculos, text="Cancelar", command=self.cancelar_vehiculo).pack(side="left", padx=3)
 
+        # -------Frame Reparaciones------- #
+        frame_busqueda_reparaciones = tk.LabelFrame(self.modulos["Reparaciones"], text="Buscar reparaciones")
+        frame_busqueda_reparaciones.pack(fill="x", padx=10, pady=5)
+        tk.Label(frame_busqueda_reparaciones, text="Datos:").pack(side="left", padx=(8, 4), pady=6)
+        self.txt_buscar_reparacion = tk.Entry(frame_busqueda_reparaciones)
+        self.txt_buscar_reparacion.pack(side="left", fill="x", expand=True, padx=(0, 4), pady=6)
+        self.txt_buscar_reparacion.bind("<Return>", self.buscar_reparaciones)
+        tk.Button(frame_busqueda_reparaciones, text="Buscar", command=self.buscar_reparaciones).pack(
+            side="left", padx=(0, 8), pady=6
+        )
+
+        frame_reparaciones = tk.LabelFrame(self.modulos["Reparaciones"], text="Registro de Reparaciones")
+        frame_reparaciones.pack(fill="both", expand=True, padx=10, pady=5)
+
+        tk.Label(frame_reparaciones, text="Reparación ID:").grid(row=0, column=0, sticky="e", padx=5, pady=4)
+        self.txt_reparacion_id = ttk.Entry(frame_reparaciones, state="readonly", width=10)
+        self.txt_reparacion_id.grid(row=0, column=1, sticky="ew", padx=5, pady=4)
+
+        tk.Label(frame_reparaciones, text="Vehículo:").grid(row=1, column=0, sticky="e", padx=5, pady=4)
+        self.combo_reparacion_vehiculo = ttk.Combobox(frame_reparaciones, state="readonly", width=32)
+        self.combo_reparacion_vehiculo.grid(row=1, column=1, sticky="ew", padx=5, pady=4)
+        self.combo_reparacion_vehiculo.bind("<<ComboboxSelected>>", self.mostrar_id_vehiculo_reparacion)
+
+        tk.Label(frame_reparaciones, text="ID Vehículo:").grid(row=1, column=2, sticky="e", padx=5, pady=4)
+        self.txt_reparacion_vehiculo_id = ttk.Entry(frame_reparaciones, state="readonly", width=10)
+        self.txt_reparacion_vehiculo_id.grid(row=1, column=3, sticky="ew", padx=5, pady=4)
+
+        tk.Label(frame_reparaciones, text="Estado:").grid(row=2, column=0, sticky="e", padx=5, pady=4)
+        self.combo_reparacion_estado = ttk.Combobox(
+            frame_reparaciones,
+            state="readonly",
+            values=list(ESTADOS_REPARACION),
+            width=20,
+        )
+        self.combo_reparacion_estado.grid(row=2, column=1, sticky="ew", padx=5, pady=4)
+
+        tk.Label(frame_reparaciones, text="Fecha entrada:").grid(row=2, column=2, sticky="e", padx=5, pady=4)
+        self.txt_reparacion_fecha_entrada = ttk.Entry(frame_reparaciones)
+        self.txt_reparacion_fecha_entrada.grid(row=2, column=3, sticky="ew", padx=5, pady=4)
+
+        tk.Label(frame_reparaciones, text="Fecha salida:").grid(row=3, column=0, sticky="e", padx=5, pady=4)
+        self.txt_reparacion_fecha_salida = ttk.Entry(frame_reparaciones)
+        self.txt_reparacion_fecha_salida.grid(row=3, column=1, sticky="ew", padx=5, pady=4)
+
+        tk.Label(frame_reparaciones, text="Pieza:").grid(row=3, column=2, sticky="e", padx=5, pady=4)
+        self.combo_reparacion_pieza = ttk.Combobox(frame_reparaciones, state="readonly", width=28)
+        self.combo_reparacion_pieza.grid(row=3, column=3, sticky="ew", padx=5, pady=4)
+
+        tk.Label(frame_reparaciones, text="Costo:").grid(row=4, column=0, sticky="e", padx=5, pady=4)
+        self.txt_reparacion_costo = ttk.Entry(frame_reparaciones)
+        self.txt_reparacion_costo.grid(row=4, column=1, sticky="ew", padx=5, pady=4)
+
+        tk.Label(frame_reparaciones, text="Asunto:").grid(row=4, column=2, sticky="e", padx=5, pady=4)
+        self.txt_reparacion_asunto = ttk.Entry(frame_reparaciones)
+        self.txt_reparacion_asunto.grid(row=4, column=3, sticky="ew", padx=5, pady=4)
+
+        acciones_reparaciones = ttk.Frame(frame_reparaciones)
+        acciones_reparaciones.grid(row=5, column=0, columnspan=4, pady=8)
+        ttk.Button(acciones_reparaciones, text="Registrar", command=self.registrar_reparacion).pack(side="left", padx=3)
+        ttk.Button(acciones_reparaciones, text="Actualizar", command=self.actualizar_reparacion_form).pack(side="left", padx=3)
+        ttk.Button(acciones_reparaciones, text="Borrar", command=self.borrar_reparacion_form).pack(side="left", padx=3)
+        ttk.Button(acciones_reparaciones, text="Cancelar", command=self.cancelar_reparacion).pack(side="left", padx=3)
+        frame_reparaciones.columnconfigure(1, weight=1)
+        frame_reparaciones.columnconfigure(3, weight=1)
+
+        # -------Frame Piezas------- #
+        frame_busqueda_piezas = tk.LabelFrame(self.modulos["Piezas"], text="Buscar piezas")
+        frame_busqueda_piezas.pack(fill="x", padx=10, pady=5)
+        tk.Label(frame_busqueda_piezas, text="Datos:").pack(side="left", padx=(8, 4), pady=6)
+        self.txt_buscar_pieza = tk.Entry(frame_busqueda_piezas)
+        self.txt_buscar_pieza.pack(side="left", fill="x", expand=True, padx=(0, 4), pady=6)
+        self.txt_buscar_pieza.bind("<Return>", self.buscar_piezas)
+        tk.Button(frame_busqueda_piezas, text="Buscar", command=self.buscar_piezas).pack(
+            side="left", padx=(0, 8), pady=6
+        )
+
+        frame_piezas = tk.LabelFrame(self.modulos["Piezas"], text="Inventario de Piezas")
+        frame_piezas.pack(fill="both", expand=True, padx=10, pady=5)
+
+        tk.Label(frame_piezas, text="Pieza ID:").grid(row=0, column=0, sticky="e", padx=5, pady=4)
+        self.txt_pieza_id = ttk.Entry(frame_piezas, state="readonly", width=10)
+        self.txt_pieza_id.grid(row=0, column=1, sticky="ew", padx=5, pady=4)
+
+        tk.Label(frame_piezas, text="Nombre:").grid(row=1, column=0, sticky="e", padx=5, pady=4)
+        self.txt_pieza_nombre = tk.Entry(frame_piezas)
+        self.txt_pieza_nombre.grid(row=1, column=1, sticky="ew", padx=5, pady=4)
+
+        tk.Label(frame_piezas, text="Categoría:").grid(row=1, column=2, sticky="e", padx=5, pady=4)
+        self.txt_pieza_categoria = tk.Entry(frame_piezas)
+        self.txt_pieza_categoria.grid(row=1, column=3, sticky="ew", padx=5, pady=4)
+
+        tk.Label(frame_piezas, text="Stock:").grid(row=2, column=0, sticky="e", padx=5, pady=4)
+        self.txt_pieza_stock = tk.Entry(frame_piezas)
+        self.txt_pieza_stock.grid(row=2, column=1, sticky="ew", padx=5, pady=4)
+
+        tk.Label(frame_piezas, text="Precio unitario:").grid(row=2, column=2, sticky="e", padx=5, pady=4)
+        self.txt_pieza_precio = tk.Entry(frame_piezas)
+        self.txt_pieza_precio.grid(row=2, column=3, sticky="ew", padx=5, pady=4)
+
+        tk.Label(frame_piezas, text="Descripción:").grid(row=3, column=0, sticky="ne", padx=5, pady=4)
+        self.txt_pieza_descripcion = tk.Text(frame_piezas, height=5, width=50)
+        self.txt_pieza_descripcion.grid(row=3, column=1, columnspan=3, sticky="nsew", padx=5, pady=4)
+
+        acciones_piezas = ttk.Frame(frame_piezas)
+        acciones_piezas.grid(row=4, column=0, columnspan=4, pady=8)
+        ttk.Button(acciones_piezas, text="Registrar", command=self.registrar_pieza).pack(side="left", padx=3)
+        ttk.Button(acciones_piezas, text="Actualizar", command=self.actualizar_pieza_form).pack(side="left", padx=3)
+        ttk.Button(acciones_piezas, text="Borrar", command=self.borrar_pieza_form).pack(side="left", padx=3)
+        ttk.Button(acciones_piezas, text="Cancelar", command=self.cancelar_pieza).pack(side="left", padx=3)
+        frame_piezas.columnconfigure(1, weight=1)
+        frame_piezas.columnconfigure(3, weight=1)
+
         self.actualizar_usuarios()
         self.actualizar_clientes()
+        self.actualizar_vehiculos()
+        self.actualizar_piezas()
+        self.actualizar_reparaciones()
 
     def mostrar_modulo(self, nombre):
         for frame in self.modulos.values():
@@ -671,6 +846,38 @@ class TallerApp:
         self.mostrar_id_cliente()
         self.buscar_clientes()
 
+    def actualizar_vehiculos(self):
+        self.vehiculos = {}
+        for vehiculo_id, cliente_id, matricula, marca, modelo, anio, color in cargar_vehiculos():
+            self.vehiculos[int(vehiculo_id)] = {
+                "cliente_id": int(cliente_id),
+                "matricula": matricula,
+                "marca": marca,
+                "modelo": modelo,
+                "anio": anio,
+                "color": color,
+            }
+        self.combo_reparacion_vehiculo["values"] = [
+            f"{datos['matricula']} - {datos['marca']} {datos['modelo']}"
+            for datos in self.vehiculos.values()
+        ]
+        self.combo_reparacion_vehiculo.set("")
+        self.txt_reparacion_vehiculo_id.configure(state="normal")
+        self.txt_reparacion_vehiculo_id.delete(0, tk.END)
+        self.txt_reparacion_vehiculo_id.configure(state="readonly")
+
+    def mostrar_id_vehiculo_reparacion(self, event=None):
+        indice = self.combo_reparacion_vehiculo.current()
+        if indice < 0:
+            vehiculo_id = ""
+        else:
+            vehiculo_id = list(self.vehiculos.keys())[indice]
+
+        self.txt_reparacion_vehiculo_id.configure(state="normal")
+        self.txt_reparacion_vehiculo_id.delete(0, tk.END)
+        self.txt_reparacion_vehiculo_id.insert(0, str(vehiculo_id))
+        self.txt_reparacion_vehiculo_id.configure(state="readonly")
+
     def buscar_clientes(self, event=None):
         consulta = self.txt_buscar_cliente.get().strip()
         if not consulta:
@@ -778,6 +985,349 @@ class TallerApp:
         else:
             self.combo_clientes.set("")
         self.mostrar_id_cliente()
+
+    def registrar_reparacion(self):
+        vehiculo_id = self.txt_reparacion_vehiculo_id.get().strip()
+        asunto = self.txt_reparacion_asunto.get().strip()
+        fecha_entrada = self.txt_reparacion_fecha_entrada.get().strip()
+        fecha_salida = self.txt_reparacion_fecha_salida.get().strip() or None
+        costo = self.txt_reparacion_costo.get().strip()
+        estado = self.combo_reparacion_estado.get().strip()
+        pieza_seleccionada = self.combo_reparacion_pieza.get().strip()
+
+        if not vehiculo_id or not asunto or not fecha_entrada or not costo or not estado:
+            messagebox.showerror("Error", "Vehículo, asunto, fecha de entrada, costo y estado son obligatorios")
+            return
+
+        pieza_id = None
+        if pieza_seleccionada:
+            pieza_id = next((pieza[0] for pieza in self.piezas if pieza[1] == pieza_seleccionada), None)
+            if pieza_id is None or not pieza_en_existencia(int(pieza_id)):
+                messagebox.showwarning("Inventario", "La pieza seleccionada no está disponible en existencia")
+                return
+
+        try:
+            costo = float(costo)
+        except ValueError:
+            messagebox.showerror("Error", "El costo debe ser un número válido")
+            return
+
+        reparacion_id = registrar_reparacion(
+            int(vehiculo_id), asunto, fecha_entrada, pieza_id, fecha_salida, costo, estado
+        )
+        if reparacion_id is None:
+            messagebox.showwarning("Error", "No se pudo registrar la reparación")
+            return
+
+        self.actualizar_reparaciones()
+        self.mostrar_datos_reparacion((reparacion_id, int(vehiculo_id), asunto, fecha_entrada, fecha_salida, pieza_id, str(costo), estado))
+        messagebox.showinfo("Éxito", f"Reparación registrada con ID {reparacion_id}")
+
+    def actualizar_reparacion_form(self):
+        reparacion_id = self.txt_reparacion_id.get().strip()
+        vehiculo_id = self.txt_reparacion_vehiculo_id.get().strip()
+        asunto = self.txt_reparacion_asunto.get().strip()
+        fecha_entrada = self.txt_reparacion_fecha_entrada.get().strip()
+        fecha_salida = self.txt_reparacion_fecha_salida.get().strip() or None
+        costo = self.txt_reparacion_costo.get().strip()
+        estado = self.combo_reparacion_estado.get().strip()
+        pieza_seleccionada = self.combo_reparacion_pieza.get().strip()
+
+        if not reparacion_id or not vehiculo_id or not asunto or not fecha_entrada or not costo or not estado:
+            messagebox.showwarning("Selecciona una reparación", "Busca primero la reparación que deseas actualizar")
+            return
+
+        pieza_id = None
+        if pieza_seleccionada:
+            pieza_id = next((pieza[0] for pieza in self.piezas if pieza[1] == pieza_seleccionada), None)
+            if pieza_id is None or not pieza_en_existencia(int(pieza_id)):
+                messagebox.showwarning("Inventario", "La pieza seleccionada no está disponible en existencia")
+                return
+
+        try:
+            costo = float(costo)
+        except ValueError:
+            messagebox.showerror("Error", "El costo debe ser un número válido")
+            return
+
+        resultado = actualizar_reparacion(
+            int(reparacion_id), int(vehiculo_id), asunto, fecha_entrada, fecha_salida, pieza_id, costo, estado
+        )
+        if not resultado:
+            messagebox.showerror("Error", "La reparación ya no existe en la base de datos")
+            self.cancelar_reparacion()
+            return
+
+        self.actualizar_reparaciones()
+        self.mostrar_datos_reparacion((int(reparacion_id), int(vehiculo_id), asunto, fecha_entrada, fecha_salida, pieza_id, str(costo), estado))
+        messagebox.showinfo("Éxito", "Reparación actualizada correctamente")
+
+    def borrar_reparacion_form(self):
+        reparacion_id = self.txt_reparacion_id.get().strip()
+        asunto = self.txt_reparacion_asunto.get().strip()
+        if not reparacion_id:
+            messagebox.showwarning("Selecciona una reparación", "Busca primero la reparación que deseas borrar")
+            return
+        if not messagebox.askyesno(
+            "Confirmar borrado",
+            f"¿Deseas borrar la reparación '{asunto[:40]}'?",
+        ):
+            return
+
+        if not eliminar_reparacion(int(reparacion_id)):
+            messagebox.showerror("Error", "La reparación ya no existe en la base de datos")
+            self.cancelar_reparacion()
+            return
+
+        self.cancelar_reparacion()
+        messagebox.showinfo("Éxito", "Reparación borrada correctamente")
+
+    def actualizar_reparaciones(self):
+        self.reparaciones = cargar_reparaciones()
+        if hasattr(self, "vehiculos"):
+            self.combo_reparacion_vehiculo["values"] = [
+                f"{datos['matricula']} - {datos['marca']} {datos['modelo']}"
+                for datos in self.vehiculos.values()
+            ]
+            self.combo_reparacion_vehiculo.set("")
+        self.txt_reparacion_vehiculo_id.configure(state="normal")
+        self.txt_reparacion_vehiculo_id.delete(0, tk.END)
+        self.txt_reparacion_vehiculo_id.configure(state="readonly")
+
+        if hasattr(self, "piezas"):
+            self.combo_reparacion_pieza["values"] = [
+                pieza[1] for pieza in self.piezas if int(pieza[3]) > 0
+            ]
+            self.combo_reparacion_pieza.set("")
+
+    def buscar_reparaciones(self, event=None):
+        consulta = self.txt_buscar_reparacion.get().strip()
+        if not consulta:
+            return
+
+        encontrados = []
+        for reparacion in cargar_reparaciones():
+            reparacion_id, vehiculo_id, asunto, fecha_entrada, fecha_salida, pieza_id, costo, estado = reparacion
+            if not vehiculo_id:
+                continue
+            nombre_vehiculo = ""
+            if int(vehiculo_id) in self.vehiculos:
+                nombre_vehiculo = f"{self.vehiculos[int(vehiculo_id)]['matricula']} {self.vehiculos[int(vehiculo_id)]['marca']} {self.vehiculos[int(vehiculo_id)]['modelo']}"
+            if coincide_busqueda(
+                consulta,
+                (reparacion_id, vehiculo_id, asunto, fecha_entrada, fecha_salida, pieza_id, costo, estado, nombre_vehiculo),
+            ):
+                encontrados.append((reparacion_id, vehiculo_id, asunto, fecha_entrada, fecha_salida, pieza_id, costo, estado))
+
+        if not encontrados:
+            messagebox.showinfo("Sin coincidencias", "No se encontró ninguna reparación con esos datos.")
+            self.limpiar_campos_reparacion()
+        elif len(encontrados) == 1:
+            self.mostrar_datos_reparacion(encontrados[0])
+        else:
+            self.limpiar_campos_reparacion()
+            messagebox.showinfo(
+                "Búsqueda",
+                f"Hay {len(encontrados)} reparaciones coincidentes. Escribe más datos para precisar la búsqueda.",
+            )
+
+    def mostrar_datos_reparacion(self, datos):
+        reparacion_id, vehiculo_id, asunto, fecha_entrada, fecha_salida, pieza_id, costo, estado = datos
+        self.txt_reparacion_id.configure(state="normal")
+        self.txt_reparacion_id.delete(0, tk.END)
+        self.txt_reparacion_id.insert(0, str(reparacion_id))
+        self.txt_reparacion_id.configure(state="readonly")
+
+        self.txt_reparacion_vehiculo_id.configure(state="normal")
+        self.txt_reparacion_vehiculo_id.delete(0, tk.END)
+        self.txt_reparacion_vehiculo_id.insert(0, str(vehiculo_id))
+        self.txt_reparacion_vehiculo_id.configure(state="readonly")
+
+        if int(vehiculo_id) in self.vehiculos:
+            vehiculo = self.vehiculos[int(vehiculo_id)]
+            self.combo_reparacion_vehiculo.set(f"{vehiculo['matricula']} - {vehiculo['marca']} {vehiculo['modelo']}")
+        else:
+            self.combo_reparacion_vehiculo.set("")
+
+        if pieza_id not in (None, ""):
+            pieza = next((item for item in self.piezas if int(item[0]) == int(pieza_id)), None)
+            if pieza is not None:
+                self.combo_reparacion_pieza.set(pieza[1])
+            else:
+                self.combo_reparacion_pieza.set("")
+        else:
+            self.combo_reparacion_pieza.set("")
+
+        self.txt_reparacion_fecha_entrada.delete(0, tk.END)
+        self.txt_reparacion_fecha_entrada.insert(0, fecha_entrada)
+        self.txt_reparacion_fecha_salida.delete(0, tk.END)
+        self.txt_reparacion_fecha_salida.insert(0, fecha_salida or "")
+        self.txt_reparacion_costo.delete(0, tk.END)
+        self.txt_reparacion_costo.insert(0, str(costo))
+        self.combo_reparacion_estado.set(estado)
+        self.txt_reparacion_asunto.delete(0, tk.END)
+        self.txt_reparacion_asunto.insert(0, asunto)
+
+    def limpiar_campos_reparacion(self):
+        self.txt_reparacion_id.configure(state="normal")
+        self.txt_reparacion_id.delete(0, tk.END)
+        self.txt_reparacion_id.configure(state="readonly")
+        self.txt_reparacion_vehiculo_id.configure(state="normal")
+        self.txt_reparacion_vehiculo_id.delete(0, tk.END)
+        self.txt_reparacion_vehiculo_id.configure(state="readonly")
+        self.combo_reparacion_vehiculo.set("")
+        self.combo_reparacion_pieza.set("")
+        self.combo_reparacion_estado.set("")
+        self.txt_reparacion_fecha_entrada.delete(0, tk.END)
+        self.txt_reparacion_fecha_salida.delete(0, tk.END)
+        self.txt_reparacion_costo.delete(0, tk.END)
+        self.txt_reparacion_asunto.delete(0, tk.END)
+
+    def cancelar_reparacion(self):
+        self.txt_buscar_reparacion.delete(0, tk.END)
+        self.limpiar_campos_reparacion()
+
+    def registrar_pieza(self):
+        nombre = self.txt_pieza_nombre.get().strip()
+        categoria = self.txt_pieza_categoria.get().strip() or "General"
+        stock = self.txt_pieza_stock.get().strip()
+        precio = self.txt_pieza_precio.get().strip()
+        descripcion = self.txt_pieza_descripcion.get("1.0", tk.END).strip()
+
+        if not nombre or not stock or not precio or not descripcion:
+            messagebox.showerror("Error", "Nombre, stock, precio y descripción son obligatorios")
+            return
+
+        try:
+            stock = int(stock)
+            precio = float(precio)
+        except ValueError:
+            messagebox.showerror("Error", "El stock debe ser entero y el precio debe ser numérico")
+            return
+
+        pieza_id = registrar_pieza(nombre, descripcion, stock, precio, categoria)
+        if pieza_id is None:
+            messagebox.showwarning("Pieza duplicada", "Ya existe una pieza con ese nombre y categoría")
+            return
+
+        self.actualizar_piezas()
+        self.mostrar_datos_pieza((pieza_id, nombre, categoria, str(stock), str(precio), descripcion))
+        messagebox.showinfo("Éxito", f"Pieza registrada con ID {pieza_id}")
+
+    def actualizar_pieza_form(self):
+        pieza_id = self.txt_pieza_id.get().strip()
+        nombre = self.txt_pieza_nombre.get().strip()
+        categoria = self.txt_pieza_categoria.get().strip() or "General"
+        stock = self.txt_pieza_stock.get().strip()
+        precio = self.txt_pieza_precio.get().strip()
+        descripcion = self.txt_pieza_descripcion.get("1.0", tk.END).strip()
+
+        if not pieza_id or not nombre or not stock or not precio or not descripcion:
+            messagebox.showwarning("Selecciona una pieza", "Busca primero la pieza que deseas actualizar")
+            return
+
+        try:
+            stock = int(stock)
+            precio = float(precio)
+        except ValueError:
+            messagebox.showerror("Error", "El stock debe ser entero y el precio debe ser numérico")
+            return
+
+        resultado = actualizar_pieza(int(pieza_id), nombre, descripcion, stock, precio, categoria)
+        if resultado is None:
+            messagebox.showwarning("Pieza duplicada", "Ya existe otra pieza con ese nombre y categoría")
+            return
+        if not resultado:
+            messagebox.showerror("Error", "La pieza ya no existe en la base de datos")
+            self.cancelar_pieza()
+            return
+
+        self.actualizar_piezas()
+        self.mostrar_datos_pieza((int(pieza_id), nombre, categoria, str(stock), str(precio), descripcion))
+        messagebox.showinfo("Éxito", "Pieza actualizada correctamente")
+
+    def borrar_pieza_form(self):
+        pieza_id = self.txt_pieza_id.get().strip()
+        nombre = self.txt_pieza_nombre.get().strip()
+        if not pieza_id:
+            messagebox.showwarning("Selecciona una pieza", "Busca primero la pieza que deseas borrar")
+            return
+        if not messagebox.askyesno(
+            "Confirmar borrado",
+            f"¿Deseas borrar la pieza {nombre}?",
+        ):
+            return
+
+        if not eliminar_pieza(int(pieza_id)):
+            messagebox.showerror("Error", "La pieza ya no existe en la base de datos")
+            self.cancelar_pieza()
+            return
+
+        self.cancelar_pieza()
+        messagebox.showinfo("Éxito", "Pieza borrada correctamente")
+
+    def actualizar_piezas(self):
+        self.piezas = cargar_piezas()
+        if hasattr(self, "combo_reparacion_pieza"):
+            self.combo_reparacion_pieza["values"] = [
+                pieza[1] for pieza in self.piezas if int(pieza[3]) > 0
+            ]
+            self.combo_reparacion_pieza.set("")
+
+    def buscar_piezas(self, event=None):
+        consulta = self.txt_buscar_pieza.get().strip()
+        if not consulta:
+            return
+
+        encontrados = []
+        for pieza in cargar_piezas():
+            pieza_id, nombre, categoria, stock, precio, descripcion = pieza
+            if coincide_busqueda(
+                consulta,
+                (pieza_id, nombre, categoria, stock, precio, descripcion),
+            ):
+                encontrados.append((pieza_id, nombre, categoria, stock, precio, descripcion))
+
+        if not encontrados:
+            messagebox.showinfo("Sin coincidencias", "No se encontró ninguna pieza con esos datos.")
+            self.limpiar_campos_pieza()
+        elif len(encontrados) == 1:
+            self.mostrar_datos_pieza(encontrados[0])
+        else:
+            self.limpiar_campos_pieza()
+            messagebox.showinfo(
+                "Búsqueda",
+                f"Hay {len(encontrados)} piezas coincidentes. Escribe más datos para precisar la búsqueda.",
+            )
+
+    def mostrar_datos_pieza(self, datos):
+        pieza_id, nombre, categoria, stock, precio, descripcion = datos
+        self.txt_pieza_id.configure(state="normal")
+        self.txt_pieza_id.delete(0, tk.END)
+        self.txt_pieza_id.insert(0, str(pieza_id))
+        self.txt_pieza_id.configure(state="readonly")
+        self.txt_pieza_nombre.delete(0, tk.END)
+        self.txt_pieza_nombre.insert(0, nombre)
+        self.txt_pieza_categoria.delete(0, tk.END)
+        self.txt_pieza_categoria.insert(0, categoria)
+        self.txt_pieza_stock.delete(0, tk.END)
+        self.txt_pieza_stock.insert(0, str(stock))
+        self.txt_pieza_precio.delete(0, tk.END)
+        self.txt_pieza_precio.insert(0, str(precio))
+        self.txt_pieza_descripcion.delete("1.0", tk.END)
+        self.txt_pieza_descripcion.insert("1.0", descripcion)
+
+    def limpiar_campos_pieza(self):
+        self.txt_pieza_id.configure(state="normal")
+        self.txt_pieza_id.delete(0, tk.END)
+        self.txt_pieza_id.configure(state="readonly")
+        for campo in (self.txt_pieza_nombre, self.txt_pieza_categoria, self.txt_pieza_stock, self.txt_pieza_precio):
+            campo.delete(0, tk.END)
+        self.txt_pieza_descripcion.delete("1.0", tk.END)
+
+    def cancelar_pieza(self):
+        self.txt_buscar_pieza.delete(0, tk.END)
+        self.limpiar_campos_pieza()
 
 # ------------------ Main ------------------
 if __name__ == "__main__":
