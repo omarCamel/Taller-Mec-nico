@@ -1205,6 +1205,10 @@ class TallerApp:
             messagebox.showerror("Error", "El stock debe ser entero y el precio debe ser numérico")
             return
 
+        if stock < 0 or precio < 0:
+            messagebox.showerror("Error", "El stock y el precio no pueden ser negativos")
+            return
+
         pieza_id = registrar_pieza(nombre, descripcion, stock, precio, categoria)
         if pieza_id is None:
             messagebox.showwarning("Pieza duplicada", "Ya existe una pieza con ese nombre y categoría")
@@ -1231,6 +1235,10 @@ class TallerApp:
             precio = float(precio)
         except ValueError:
             messagebox.showerror("Error", "El stock debe ser entero y el precio debe ser numérico")
+            return
+
+        if stock < 0 or precio < 0:
+            messagebox.showerror("Error", "El stock y el precio no pueden ser negativos")
             return
 
         resultado = actualizar_pieza(int(pieza_id), nombre, descripcion, stock, precio, categoria)

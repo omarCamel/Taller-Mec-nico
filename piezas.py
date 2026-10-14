@@ -3,6 +3,23 @@ import mysql.connector
 from database import conectar_mysql, normalizar_texto
 
 
+def _validar_valores_pieza(stock, precio_unitario):
+    stock = int(stock)
+    precio_unitario = float(precio_unitario)
+    if stock < 0:
+        raise ValueError("El stock no puede ser negativo.")
+    if precio_unitario < 0:
+        raise ValueError("El precio unitario no puede ser negativo.")
+    return stock, precio_unitario
+
+
+def _validar_cantidad(cantidad):
+    cantidad = int(cantidad)
+    if cantidad < 0:
+        raise ValueError("La cantidad no puede ser negativa.")
+    return cantidad
+
+
 def pieza_duplicada(nombre, categoria="General", excluir_id=None):
     """Comprueba si ya existe una pieza con el mismo nombre y categoría."""
     nombre_normalizado = normalizar_texto(nombre)
@@ -37,6 +54,7 @@ def pieza_en_existencia(pieza_id):
 
 def registrar_pieza(nombre, descripcion, stock, precio_unitario, categoria="General"):
     """Registra una pieza con validación de nombre único y existencia disponible."""
+    stock, precio_unitario = _validar_valores_pieza(stock, precio_unitario)
     if pieza_duplicada(nombre, categoria):
         return None
 
@@ -49,8 +67,8 @@ def registrar_pieza(nombre, descripcion, stock, precio_unitario, categoria="Gene
             (
                 nombre.strip(),
                 categoria.strip() or "General",
-                int(stock),
-                float(precio_unitario),
+                stock,
+                precio_unitario,
                 descripcion.strip(),
             ),
         )
@@ -66,6 +84,7 @@ def registrar_pieza(nombre, descripcion, stock, precio_unitario, categoria="Gene
 
 def actualizar_pieza(pieza_id, nombre, descripcion, stock, precio_unitario, categoria="General"):
     """Actualiza una pieza existente."""
+    stock, precio_unitario = _validar_valores_pieza(stock, precio_unitario)
     if pieza_duplicada(nombre, categoria, excluir_id=pieza_id):
         return None
 
@@ -78,8 +97,8 @@ def actualizar_pieza(pieza_id, nombre, descripcion, stock, precio_unitario, cate
             (
                 nombre.strip(),
                 categoria.strip() or "General",
-                int(stock),
-                float(precio_unitario),
+                stock,
+                precio_unitario,
                 descripcion.strip(),
                 pieza_id,
             ),
@@ -117,12 +136,13 @@ def eliminar_pieza(pieza_id):
 
 def descontar_stock_pieza(pieza_id, cantidad=1):
     """Descuenta existencias de una pieza si hay stock suficiente."""
+    cantidad = _validar_cantidad(cantidad)
     conexion = conectar_mysql()
     cursor = conexion.cursor()
     try:
         cursor.execute(
             "UPDATE piezas SET stock = GREATEST(stock - %s, 0) WHERE id = %s",
-            (int(cantidad), pieza_id),
+            (cantidad, pieza_id),
         )
         conexion.commit()
         return cursor.rowcount > 0
@@ -133,12 +153,13 @@ def descontar_stock_pieza(pieza_id, cantidad=1):
 
 def devolver_stock_pieza(pieza_id, cantidad=1):
     """Devuelve piezas al inventario tras cancelar o eliminar una reparación."""
+    cantidad = _validar_cantidad(cantidad)
     conexion = conectar_mysql()
     cursor = conexion.cursor()
     try:
         cursor.execute(
             "UPDATE piezas SET stock = stock + %s WHERE id = %s",
-            (int(cantidad), pieza_id),
+            (cantidad, pieza_id),
         )
         conexion.commit()
         return cursor.rowcount > 0
