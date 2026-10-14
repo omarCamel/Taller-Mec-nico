@@ -24,6 +24,14 @@ def registrar_reparacion(
     cursor = conexion.cursor()
     try:
         cursor.execute(
+            "SELECT EXISTS(SELECT 1 FROM vehiculos), "
+            "EXISTS(SELECT 1 FROM piezas WHERE stock > 0)"
+        )
+        hay_vehiculos, hay_piezas_disponibles = cursor.fetchone()
+        if not hay_vehiculos or not hay_piezas_disponibles:
+            return None
+
+        cursor.execute(
             """INSERT INTO reparaciones
                (vehiculo_id, asunto, fecha_entrada, fecha_salida, pieza_id, costo, estado)
                VALUES (%s, %s, %s, %s, %s, %s, %s)""",

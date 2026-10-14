@@ -987,6 +987,13 @@ class TallerApp:
         self.mostrar_id_cliente()
 
     def registrar_reparacion(self):
+        if not self.vehiculos or not any(int(pieza[3]) > 0 for pieza in self.piezas):
+            messagebox.showwarning(
+                "Recursos insuficientes",
+                "Se requiere al menos un vehículo registrado y una pieza con stock disponible.",
+            )
+            return
+
         vehiculo_id = self.txt_reparacion_vehiculo_id.get().strip()
         asunto = self.txt_reparacion_asunto.get().strip()
         fecha_entrada = self.txt_reparacion_fecha_entrada.get().strip()
@@ -1016,7 +1023,10 @@ class TallerApp:
             int(vehiculo_id), asunto, fecha_entrada, pieza_id, fecha_salida, costo, estado
         )
         if reparacion_id is None:
-            messagebox.showwarning("Error", "No se pudo registrar la reparación")
+            messagebox.showwarning(
+                "Error",
+                "No se pudo registrar la reparación. Verifica que exista un vehículo y una pieza con stock disponible.",
+            )
             return
 
         self.actualizar_reparaciones()
