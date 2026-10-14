@@ -24,6 +24,7 @@ from reparaciones import (
     cargar_reparaciones,
     eliminar_reparacion,
     registrar_reparacion,
+    validar_fechas_reparacion,
 )
 from usuarios import (
     actualizar_usuario,
@@ -1006,6 +1007,12 @@ class TallerApp:
             messagebox.showerror("Error", "Vehículo, asunto, fecha de entrada, costo y estado son obligatorios")
             return
 
+        try:
+            validar_fechas_reparacion(fecha_entrada, fecha_salida)
+        except ValueError as error:
+            messagebox.showerror("Fechas no válidas", str(error))
+            return
+
         pieza_id = None
         if pieza_seleccionada:
             pieza_id = next((pieza[0] for pieza in self.piezas if pieza[1] == pieza_seleccionada), None)
@@ -1045,6 +1052,12 @@ class TallerApp:
 
         if not reparacion_id or not vehiculo_id or not asunto or not fecha_entrada or not costo or not estado:
             messagebox.showwarning("Selecciona una reparación", "Busca primero la reparación que deseas actualizar")
+            return
+
+        try:
+            validar_fechas_reparacion(fecha_entrada, fecha_salida)
+        except ValueError as error:
+            messagebox.showerror("Fechas no válidas", str(error))
             return
 
         pieza_id = None

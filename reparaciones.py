@@ -1,3 +1,5 @@
+from datetime import date
+
 import mysql.connector
 
 from database import conectar_mysql
@@ -5,6 +7,18 @@ from piezas import descontar_stock_pieza, devolver_stock_pieza, pieza_en_existen
 
 
 ESTADOS_REPARACION = ("Pendiente", "En proceso", "Completada", "Cancelada")
+
+
+def validar_fechas_reparacion(fecha_entrada, fecha_salida):
+    """Valida el formato y orden cronológico de las fechas de una reparación."""
+    try:
+        entrada = date.fromisoformat(fecha_entrada)
+        salida = date.fromisoformat(fecha_salida) if fecha_salida else None
+    except (TypeError, ValueError) as error:
+        raise ValueError("Las fechas deben tener el formato AAAA-MM-DD.") from error
+
+    if salida is not None and entrada > salida:
+        raise ValueError("La fecha de entrada no puede ser posterior a la fecha de salida.")
 
 
 def registrar_reparacion(
@@ -17,6 +31,7 @@ def registrar_reparacion(
     estado="Pendiente",
 ):
     """Registra una reparación asociada a un vehículo y a una pieza en existencia."""
+    validar_fechas_reparacion(fecha_entrada, fecha_salida)
     if pieza_id not in (None, "") and not pieza_en_existencia(pieza_id):
         return None
 
@@ -68,6 +83,7 @@ def actualizar_reparacion(
     estado,
 ):
     """Actualiza los datos de una reparación y ajusa el stock de la pieza usada."""
+    validar_fechas_reparacion(fecha_entrada, fecha_salida)
     conexion = conectar_mysql()
     cursor = conexion.cursor()
     try:
