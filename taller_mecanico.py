@@ -1,5 +1,6 @@
 import tkinter as tk
 import unicodedata
+from functools import wraps
 from tkinter import ttk, messagebox
 import mysql.connector
 
@@ -38,6 +39,37 @@ from vehiculos import (
     eliminar_vehiculo,
     registrar_vehiculo,
 )
+
+
+PERMISOS_POR_PERFIL = {
+    "admin": {
+        "Usuarios": {"ver", "registrar", "actualizar", "borrar"},
+        "Clientes": {"ver", "registrar", "actualizar", "borrar"},
+        "Vehículos": {"ver", "registrar", "actualizar", "borrar"},
+        "Reparaciones": {"ver", "registrar", "actualizar", "borrar"},
+        "Piezas": {"ver", "registrar", "actualizar", "borrar"},
+    },
+    "encargado": {"Clientes": {"ver", "registrar", "actualizar", "borrar"}},
+    "mecanico": {"Reparaciones": {"ver", "registrar", "actualizar", "borrar"}},
+}
+
+
+def requiere_permiso(modulo, accion):
+    def decorador(metodo):
+        @wraps(metodo)
+        def protegido(self, *args, **kwargs):
+            if not self._tiene_permiso(modulo, accion):
+                messagebox.showwarning(
+                    "Acceso denegado",
+                    f"Tu perfil no tiene permiso para {accion} en {modulo}.",
+                )
+                return None
+            return metodo(self, *args, **kwargs)
+
+        return protegido
+
+    return decorador
+
 
 def normalizar_busqueda(texto):
     texto = unicodedata.normalize("NFKD", str(texto).casefold())
@@ -134,6 +166,21 @@ def inicializar_base_datos():
     for sentencia in sentencias:
         cursor.execute(sentencia)
 
+    cursor.execute("SHOW INDEX FROM piezas")
+    indices_unicos_piezas = {}
+    for fila in cursor.fetchall():
+        if fila[1] == 0:
+            indices_unicos_piezas.setdefault(fila[2], []).append((fila[3], fila[4].lower()))
+    tiene_indice_unico_pieza = any(
+        len(columnas_indice) == 2
+        and {columna for _, columna in sorted(columnas_indice)} == {"nombre", "categoria"}
+        for columnas_indice in indices_unicos_piezas.values()
+    )
+    if not tiene_indice_unico_pieza:
+        cursor.execute(
+            "ALTER TABLE piezas ADD UNIQUE KEY uq_pieza_datos (nombre, categoria)"
+        )
+
     cursor.execute("SHOW COLUMNS FROM clientes")
     columnas = {fila[0].lower() for fila in cursor.fetchall()}
     for nombre_columna, tipo, longitud in (
@@ -208,11 +255,14 @@ class LoginApp:
         for widget in self.root.winfo_children():
             widget.destroy()
         self.root.resizable(True, True)
-        TallerApp(self.root)
+        TallerApp(self.root, usuario)
 
 class TallerApp:
-    def __init__(self, root):
+    def __init__(self, root, usuario):
         self.root = root
+        perfil = str(usuario.get("perfil", "")).strip().casefold()
+        self.perfil = perfil
+        self.permisos = PERMISOS_POR_PERFIL.get(perfil, {})
         self.root.title("Taller Automotriz")
         self.root.geometry("700x550")
 
@@ -228,10 +278,11 @@ class TallerApp:
         for nombre in ("Usuarios", "Clientes", "Vehículos", "Reparaciones", "Piezas"):
             frame = tk.Frame(self.contenido)
             self.modulos[nombre] = frame
-            menu_modulos.add_command(
-                label=nombre,
-                command=lambda modulo=nombre: self.mostrar_modulo(modulo),
-            )
+            if self._tiene_permiso(nombre, "ver"):
+                menu_modulos.add_command(
+                    label=nombre,
+                    command=lambda modulo=nombre: self.mostrar_modulo(modulo),
+                )
 
         frame_busqueda_usuarios = tk.LabelFrame(self.modulos["Usuarios"], text="Buscar usuarios")
         frame_busqueda_usuarios.pack(fill="x", padx=10, pady=5)
@@ -515,8 +566,27 @@ class TallerApp:
         self.actualizar_vehiculos()
         self.actualizar_piezas()
         self.actualizar_reparaciones()
+        self._aplicar_permisos_ui()
+
+    def _tiene_permiso(self, modulo, accion):
+        return accion in self.permisos.get(modulo, set())
+
+    def _aplicar_permisos_ui(self):
+        acciones = {"Registrar": "registrar", "Actualizar": "actualizar", "Borrar": "borrar"}
+        for modulo, frame in self.modulos.items():
+            contenedores = [frame]
+            while contenedores:
+                contenedor = contenedores.pop()
+                for widget in contenedor.winfo_children():
+                    contenedores.append(widget)
+                    if isinstance(widget, (tk.Button, ttk.Button)):
+                        accion = acciones.get(widget.cget("text"))
+                        if accion and not self._tiene_permiso(modulo, accion):
+                            widget.configure(state="disabled")
 
     def mostrar_modulo(self, nombre):
+        if not self._tiene_permiso(nombre, "ver"):
+            return
         for frame in self.modulos.values():
             frame.pack_forget()
         self.modulos[nombre].pack(fill="both", expand=True)
@@ -524,6 +594,7 @@ class TallerApp:
     def actualizar_usuarios(self):
         self.usuarios = cargar_usuarios()
 
+    @requiere_permiso("Usuarios", "registrar")
     def registrar_usuario(self):
         nombre = self.txt_usuario_nombre.get().strip()
         telefono = self.txt_usuario_telefono.get().strip()
@@ -544,6 +615,7 @@ class TallerApp:
         self.mostrar_datos_usuario(self.usuarios[-1])
         messagebox.showinfo("Éxito", f"Usuario registrado con ID {usuario_id}")
 
+    @requiere_permiso("Usuarios", "actualizar")
     def actualizar_usuario_form(self):
         usuario_id = self.txt_usuario_id.get().strip()
         nombre = self.txt_usuario_nombre.get().strip()
@@ -577,6 +649,7 @@ class TallerApp:
         self.mostrar_datos_usuario(usuario_actualizado)
         messagebox.showinfo("Éxito", "Usuario actualizado correctamente")
 
+    @requiere_permiso("Usuarios", "borrar")
     def borrar_usuario_form(self):
         usuario_id = self.txt_usuario_id.get().strip()
         if not usuario_id:
@@ -687,6 +760,7 @@ class TallerApp:
         self.combo_clientes.set("")
         self.mostrar_id_cliente()
 
+    @requiere_permiso("Clientes", "registrar")
     def registrar_cliente(self):
         nombre = self.txt_nombre.get().strip()
         telefono = self.txt_telefono.get().strip()
@@ -704,6 +778,7 @@ class TallerApp:
         messagebox.showinfo("Éxito", f"Cliente registrado con ID {cliente_id}")
         self.actualizar_clientes()
 
+    @requiere_permiso("Clientes", "actualizar")
     def actualizar_cliente_form(self):
         cliente_id = self.txt_cliente_registro_id.get().strip()
         datos = (
@@ -730,6 +805,7 @@ class TallerApp:
             self.mostrar_datos_cliente(int(cliente_id))
             messagebox.showinfo("Éxito", "Cliente actualizado correctamente")
 
+    @requiere_permiso("Clientes", "borrar")
     def borrar_cliente_form(self):
         cliente_id = self.txt_cliente_registro_id.get().strip()
         if not cliente_id:
@@ -756,6 +832,7 @@ class TallerApp:
             self.actualizar_clientes()
             messagebox.showinfo("Éxito", "Cliente borrado correctamente")
 
+    @requiere_permiso("Vehículos", "registrar")
     def registrar_vehiculo(self):
         cliente = self.combo_clientes.get()
         if not cliente:
@@ -781,9 +858,11 @@ class TallerApp:
         if not registrado:
             messagebox.showwarning("Vehículo duplicado", "Ya existe un vehículo con esa matrícula")
             return
+        self.actualizar_vehiculos()
         messagebox.showinfo("Éxito", "Vehículo registrado correctamente")
         self.buscar_vehiculos()
 
+    @requiere_permiso("Vehículos", "actualizar")
     def actualizar_vehiculo_form(self):
         vehiculo_id = self.txt_vehiculo_id.get().strip()
         cliente_id = self.txt_cliente_id.get().strip()
@@ -809,9 +888,13 @@ class TallerApp:
             messagebox.showerror("Error", "El vehículo ya no existe o el cliente seleccionado no es válido")
             self.cancelar_vehiculo()
         else:
-            self.buscar_vehiculos()
+            self.actualizar_vehiculos()
+            self.mostrar_datos_vehiculo(
+                (vehiculo_id, cliente_id, matricula, marca, modelo, año, color)
+            )
             messagebox.showinfo("Éxito", "Vehículo actualizado correctamente")
 
+    @requiere_permiso("Vehículos", "borrar")
     def borrar_vehiculo_form(self):
         vehiculo_id = self.txt_vehiculo_id.get().strip()
         matricula = self.txt_matricula.get().strip()
@@ -829,6 +912,7 @@ class TallerApp:
             self.cancelar_vehiculo()
             return
         self.cancelar_vehiculo()
+        self.actualizar_vehiculos()
         messagebox.showinfo("Éxito", "Vehículo borrado correctamente")
 
     def mostrar_id_cliente(self, event=None):
@@ -848,6 +932,7 @@ class TallerApp:
         self.buscar_clientes()
 
     def actualizar_vehiculos(self):
+        vehiculo_seleccionado = self.txt_reparacion_vehiculo_id.get().strip()
         self.vehiculos = {}
         for vehiculo_id, cliente_id, matricula, marca, modelo, anio, color in cargar_vehiculos():
             self.vehiculos[int(vehiculo_id)] = {
@@ -862,10 +947,14 @@ class TallerApp:
             f"{datos['matricula']} - {datos['marca']} {datos['modelo']}"
             for datos in self.vehiculos.values()
         ]
-        self.combo_reparacion_vehiculo.set("")
-        self.txt_reparacion_vehiculo_id.configure(state="normal")
-        self.txt_reparacion_vehiculo_id.delete(0, tk.END)
-        self.txt_reparacion_vehiculo_id.configure(state="readonly")
+        vehiculo_ids = list(self.vehiculos)
+        if vehiculo_seleccionado and int(vehiculo_seleccionado) in self.vehiculos:
+            self.combo_reparacion_vehiculo.current(vehiculo_ids.index(int(vehiculo_seleccionado)))
+        else:
+            self.combo_reparacion_vehiculo.set("")
+            self.txt_reparacion_vehiculo_id.configure(state="normal")
+            self.txt_reparacion_vehiculo_id.delete(0, tk.END)
+            self.txt_reparacion_vehiculo_id.configure(state="readonly")
 
     def mostrar_id_vehiculo_reparacion(self, event=None):
         indice = self.combo_reparacion_vehiculo.current()
@@ -987,6 +1076,7 @@ class TallerApp:
             self.combo_clientes.set("")
         self.mostrar_id_cliente()
 
+    @requiere_permiso("Reparaciones", "registrar")
     def registrar_reparacion(self):
         if not self.vehiculos or not any(int(pieza[3]) > 0 for pieza in self.piezas):
             messagebox.showwarning(
@@ -1003,8 +1093,11 @@ class TallerApp:
         estado = self.combo_reparacion_estado.get().strip()
         pieza_seleccionada = self.combo_reparacion_pieza.get().strip()
 
-        if not vehiculo_id or not asunto or not fecha_entrada or not costo or not estado:
-            messagebox.showerror("Error", "Vehículo, asunto, fecha de entrada, costo y estado son obligatorios")
+        if not vehiculo_id or not asunto or not fecha_entrada or not costo or not estado or not pieza_seleccionada:
+            messagebox.showerror(
+                "Error",
+                "Vehículo, asunto, fecha de entrada, pieza, costo y estado son obligatorios",
+            )
             return
 
         try:
@@ -1040,6 +1133,7 @@ class TallerApp:
         self.mostrar_datos_reparacion((reparacion_id, int(vehiculo_id), asunto, fecha_entrada, fecha_salida, pieza_id, str(costo), estado))
         messagebox.showinfo("Éxito", f"Reparación registrada con ID {reparacion_id}")
 
+    @requiere_permiso("Reparaciones", "actualizar")
     def actualizar_reparacion_form(self):
         reparacion_id = self.txt_reparacion_id.get().strip()
         vehiculo_id = self.txt_reparacion_vehiculo_id.get().strip()
@@ -1050,8 +1144,14 @@ class TallerApp:
         estado = self.combo_reparacion_estado.get().strip()
         pieza_seleccionada = self.combo_reparacion_pieza.get().strip()
 
-        if not reparacion_id or not vehiculo_id or not asunto or not fecha_entrada or not costo or not estado:
+        if not reparacion_id:
             messagebox.showwarning("Selecciona una reparación", "Busca primero la reparación que deseas actualizar")
+            return
+        if not vehiculo_id or not asunto or not fecha_entrada or not costo or not estado or not pieza_seleccionada:
+            messagebox.showerror(
+                "Error",
+                "Vehículo, asunto, fecha de entrada, pieza, costo y estado son obligatorios",
+            )
             return
 
         try:
@@ -1088,6 +1188,7 @@ class TallerApp:
         self.mostrar_datos_reparacion((int(reparacion_id), int(vehiculo_id), asunto, fecha_entrada, fecha_salida, pieza_id, str(costo), estado))
         messagebox.showinfo("Éxito", "Reparación actualizada correctamente")
 
+    @requiere_permiso("Reparaciones", "borrar")
     def borrar_reparacion_form(self):
         reparacion_id = self.txt_reparacion_id.get().strip()
         asunto = self.txt_reparacion_asunto.get().strip()
@@ -1110,6 +1211,7 @@ class TallerApp:
 
     def actualizar_reparaciones(self):
         self.reparaciones = cargar_reparaciones()
+        self.actualizar_piezas()
         if hasattr(self, "vehiculos"):
             self.combo_reparacion_vehiculo["values"] = [
                 f"{datos['matricula']} - {datos['marca']} {datos['modelo']}"
@@ -1119,12 +1221,6 @@ class TallerApp:
         self.txt_reparacion_vehiculo_id.configure(state="normal")
         self.txt_reparacion_vehiculo_id.delete(0, tk.END)
         self.txt_reparacion_vehiculo_id.configure(state="readonly")
-
-        if hasattr(self, "piezas"):
-            self.combo_reparacion_pieza["values"] = [
-                pieza[1] for pieza in self.piezas if int(pieza[3]) > 0
-            ]
-            self.combo_reparacion_pieza.set("")
 
     def buscar_reparaciones(self, event=None):
         consulta = self.txt_buscar_reparacion.get().strip()
@@ -1213,6 +1309,7 @@ class TallerApp:
         self.txt_buscar_reparacion.delete(0, tk.END)
         self.limpiar_campos_reparacion()
 
+    @requiere_permiso("Piezas", "registrar")
     def registrar_pieza(self):
         nombre = self.txt_pieza_nombre.get().strip()
         categoria = self.txt_pieza_categoria.get().strip() or "General"
@@ -1244,6 +1341,7 @@ class TallerApp:
         self.mostrar_datos_pieza((pieza_id, nombre, categoria, str(stock), str(precio), descripcion))
         messagebox.showinfo("Éxito", f"Pieza registrada con ID {pieza_id}")
 
+    @requiere_permiso("Piezas", "actualizar")
     def actualizar_pieza_form(self):
         pieza_id = self.txt_pieza_id.get().strip()
         nombre = self.txt_pieza_nombre.get().strip()
@@ -1280,6 +1378,7 @@ class TallerApp:
         self.mostrar_datos_pieza((int(pieza_id), nombre, categoria, str(stock), str(precio), descripcion))
         messagebox.showinfo("Éxito", "Pieza actualizada correctamente")
 
+    @requiere_permiso("Piezas", "borrar")
     def borrar_pieza_form(self):
         pieza_id = self.txt_pieza_id.get().strip()
         nombre = self.txt_pieza_nombre.get().strip()

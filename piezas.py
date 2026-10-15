@@ -3,6 +3,14 @@ import mysql.connector
 from database import conectar_mysql, normalizar_texto
 
 
+def _normalizar_nombre(nombre):
+    return " ".join(nombre.split())
+
+
+def _normalizar_categoria(categoria):
+    return " ".join(categoria.split()) or "General"
+
+
 def _validar_valores_pieza(stock, precio_unitario):
     stock = int(stock)
     precio_unitario = float(precio_unitario)
@@ -23,7 +31,7 @@ def _validar_cantidad(cantidad):
 def pieza_duplicada(nombre, categoria="General", excluir_id=None):
     """Comprueba si ya existe una pieza con el mismo nombre y categoría."""
     nombre_normalizado = normalizar_texto(nombre)
-    categoria_normalizada = normalizar_texto(categoria)
+    categoria_normalizada = normalizar_texto(_normalizar_categoria(categoria))
     conexion = conectar_mysql()
     cursor = conexion.cursor()
     try:
@@ -55,6 +63,8 @@ def pieza_en_existencia(pieza_id):
 def registrar_pieza(nombre, descripcion, stock, precio_unitario, categoria="General"):
     """Registra una pieza con validación de nombre único y existencia disponible."""
     stock, precio_unitario = _validar_valores_pieza(stock, precio_unitario)
+    nombre = _normalizar_nombre(nombre)
+    categoria = _normalizar_categoria(categoria)
     if pieza_duplicada(nombre, categoria):
         return None
 
@@ -65,8 +75,8 @@ def registrar_pieza(nombre, descripcion, stock, precio_unitario, categoria="Gene
             """INSERT INTO piezas (nombre, categoria, stock, precio_unitario, descripcion)
                VALUES (%s, %s, %s, %s, %s)""",
             (
-                nombre.strip(),
-                categoria.strip() or "General",
+                nombre,
+                categoria,
                 stock,
                 precio_unitario,
                 descripcion.strip(),
@@ -85,6 +95,8 @@ def registrar_pieza(nombre, descripcion, stock, precio_unitario, categoria="Gene
 def actualizar_pieza(pieza_id, nombre, descripcion, stock, precio_unitario, categoria="General"):
     """Actualiza una pieza existente."""
     stock, precio_unitario = _validar_valores_pieza(stock, precio_unitario)
+    nombre = _normalizar_nombre(nombre)
+    categoria = _normalizar_categoria(categoria)
     if pieza_duplicada(nombre, categoria, excluir_id=pieza_id):
         return None
 
@@ -95,8 +107,8 @@ def actualizar_pieza(pieza_id, nombre, descripcion, stock, precio_unitario, cate
             """UPDATE piezas SET nombre = %s, categoria = %s, stock = %s,
                precio_unitario = %s, descripcion = %s WHERE id = %s""",
             (
-                nombre.strip(),
-                categoria.strip() or "General",
+                nombre,
+                categoria,
                 stock,
                 precio_unitario,
                 descripcion.strip(),
@@ -112,7 +124,7 @@ def actualizar_pieza(pieza_id, nombre, descripcion, stock, precio_unitario, cate
         return True
     except mysql.connector.IntegrityError:
         conexion.rollback()
-        return False
+        return None
     finally:
         cursor.close()
         conexion.close()

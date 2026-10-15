@@ -1,4 +1,5 @@
 from datetime import date
+from math import isfinite
 
 import mysql.connector
 
@@ -7,6 +8,28 @@ from piezas import descontar_stock_pieza_en_cursor, devolver_stock_pieza_en_curs
 
 
 ESTADOS_REPARACION = ("Pendiente", "En proceso", "Completada", "Cancelada")
+
+
+def _validar_datos_reparacion(vehiculo_id, asunto, fecha_entrada, pieza_id, costo, estado):
+    if vehiculo_id in (None, ""):
+        raise ValueError("El vehículo es obligatorio.")
+    if not asunto or not asunto.strip():
+        raise ValueError("El asunto es obligatorio.")
+    if fecha_entrada in (None, ""):
+        raise ValueError("La fecha de entrada es obligatoria.")
+    if pieza_id in (None, ""):
+        raise ValueError("Debe seleccionar una pieza.")
+    if costo in (None, ""):
+        raise ValueError("El costo es obligatorio.")
+    if estado not in ESTADOS_REPARACION:
+        raise ValueError("Seleccione un estado válido para la reparación.")
+
+    vehiculo_id = int(vehiculo_id)
+    pieza_id = int(pieza_id)
+    costo = float(costo)
+    if not isfinite(costo) or costo < 0:
+        raise ValueError("El costo debe ser un número no negativo.")
+    return vehiculo_id, asunto.strip(), pieza_id, costo, estado
 
 
 def validar_fechas_reparacion(fecha_entrada, fecha_salida):
@@ -31,15 +54,18 @@ def registrar_reparacion(
     estado="Pendiente",
 ):
     """Registra una reparación asociada a un vehículo y a una pieza en existencia."""
+    vehiculo_id, asunto, pieza_id, costo, estado = _validar_datos_reparacion(
+        vehiculo_id, asunto, fecha_entrada, pieza_id, costo, estado
+    )
     validar_fechas_reparacion(fecha_entrada, fecha_salida)
-    pieza_id = int(pieza_id) if pieza_id not in (None, "") else None
 
     conexion = conectar_mysql()
     cursor = conexion.cursor()
     try:
         cursor.execute(
-            "SELECT EXISTS(SELECT 1 FROM vehiculos), "
-            "EXISTS(SELECT 1 FROM piezas WHERE stock > 0)"
+            "SELECT EXISTS(SELECT 1 FROM vehiculos WHERE id = %s), "
+            "EXISTS(SELECT 1 FROM piezas WHERE id = %s AND stock > 0)",
+            (vehiculo_id, pieza_id),
         )
         hay_vehiculos, hay_piezas_disponibles = cursor.fetchone()
         if not hay_vehiculos or not hay_piezas_disponibles:
@@ -87,8 +113,13 @@ def actualizar_reparacion(
     estado,
 ):
     """Actualiza los datos de una reparación y ajusa el stock de la pieza usada."""
+    if reparacion_id in (None, ""):
+        raise ValueError("La reparación es obligatoria.")
+    reparacion_id = int(reparacion_id)
+    vehiculo_id, asunto, pieza_id, costo, estado = _validar_datos_reparacion(
+        vehiculo_id, asunto, fecha_entrada, pieza_id, costo, estado
+    )
     validar_fechas_reparacion(fecha_entrada, fecha_salida)
-    pieza_id = int(pieza_id) if pieza_id not in (None, "") else None
     conexion = conectar_mysql()
     cursor = conexion.cursor()
     try:
