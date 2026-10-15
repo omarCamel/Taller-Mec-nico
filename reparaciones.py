@@ -10,7 +10,9 @@ from piezas import descontar_stock_pieza_en_cursor, devolver_stock_pieza_en_curs
 ESTADOS_REPARACION = ("Pendiente", "En proceso", "Completada", "Cancelada")
 
 
-def _validar_datos_reparacion(vehiculo_id, asunto, fecha_entrada, pieza_id, costo, estado):
+def _validar_datos_reparacion(
+    vehiculo_id, asunto, fecha_entrada, pieza_id, cantidad_pieza, costo, estado
+):
     if vehiculo_id in (None, ""):
         raise ValueError("El vehículo es obligatorio.")
     if not asunto or not asunto.strip():
@@ -19,6 +21,8 @@ def _validar_datos_reparacion(vehiculo_id, asunto, fecha_entrada, pieza_id, cost
         raise ValueError("La fecha de entrada es obligatoria.")
     if pieza_id in (None, ""):
         raise ValueError("Debe seleccionar una pieza.")
+    if cantidad_pieza in (None, ""):
+        raise ValueError("La cantidad de piezas es obligatoria.")
     if costo in (None, ""):
         raise ValueError("El costo es obligatorio.")
     if estado not in ESTADOS_REPARACION:
@@ -26,10 +30,19 @@ def _validar_datos_reparacion(vehiculo_id, asunto, fecha_entrada, pieza_id, cost
 
     vehiculo_id = int(vehiculo_id)
     pieza_id = int(pieza_id)
+    cantidad_original = cantidad_pieza
+    try:
+        cantidad_pieza = int(cantidad_pieza)
+    except (TypeError, ValueError) as error:
+        raise ValueError("La cantidad de piezas debe ser un entero positivo.") from error
+    if cantidad_pieza < 1 or (
+        not isinstance(cantidad_original, str) and cantidad_original != cantidad_pieza
+    ):
+        raise ValueError("La cantidad de piezas debe ser un entero positivo.")
     costo = float(costo)
     if not isfinite(costo) or costo < 0:
         raise ValueError("El costo debe ser un número no negativo.")
-    return vehiculo_id, asunto.strip(), pieza_id, costo, estado
+    return vehiculo_id, asunto.strip(), pieza_id, cantidad_pieza, costo, estado
 
 
 def validar_fechas_reparacion(fecha_entrada, fecha_salida):
@@ -52,10 +65,11 @@ def registrar_reparacion(
     fecha_salida=None,
     costo=0.0,
     estado="Pendiente",
+    cantidad_pieza=1,
 ):
     """Registra una reparación asociada a un vehículo y a una pieza en existencia."""
-    vehiculo_id, asunto, pieza_id, costo, estado = _validar_datos_reparacion(
-        vehiculo_id, asunto, fecha_entrada, pieza_id, costo, estado
+    vehiculo_id, asunto, pieza_id, cantidad_pieza, costo, estado = _validar_datos_reparacion(
+        vehiculo_id, asunto, fecha_entrada, pieza_id, cantidad_pieza, costo, estado
     )
     validar_fechas_reparacion(fecha_entrada, fecha_salida)
 
@@ -64,8 +78,8 @@ def registrar_reparacion(
     try:
         cursor.execute(
             "SELECT EXISTS(SELECT 1 FROM vehiculos WHERE id = %s), "
-            "EXISTS(SELECT 1 FROM piezas WHERE id = %s AND stock > 0)",
-            (vehiculo_id, pieza_id),
+            "EXISTS(SELECT 1 FROM piezas WHERE id = %s AND stock >= %s)",
+            (vehiculo_id, pieza_id, cantidad_pieza),
         )
         hay_vehiculos, hay_piezas_disponibles = cursor.fetchone()
         if not hay_vehiculos or not hay_piezas_disponibles:
@@ -74,19 +88,21 @@ def registrar_reparacion(
 
         cursor.execute(
             """INSERT INTO reparaciones
-               (vehiculo_id, asunto, fecha_entrada, fecha_salida, pieza_id, costo, estado)
-               VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+               (vehiculo_id, asunto, fecha_entrada, fecha_salida, pieza_id,
+                cantidad_pieza, costo, estado)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
             (
                 vehiculo_id,
                 asunto.strip(),
                 fecha_entrada,
                 fecha_salida or None,
                 pieza_id,
+                cantidad_pieza,
                 costo,
                 estado,
             ),
         )
-        if pieza_id is not None and not descontar_stock_pieza_en_cursor(cursor, pieza_id, 1):
+        if not descontar_stock_pieza_en_cursor(cursor, pieza_id, cantidad_pieza):
             conexion.rollback()
             return None
         conexion.commit()
@@ -111,28 +127,30 @@ def actualizar_reparacion(
     pieza_id,
     costo,
     estado,
+    cantidad_pieza=1,
 ):
-    """Actualiza los datos de una reparación y ajusa el stock de la pieza usada."""
+    """Actualiza la reparación y ajusta el inventario según la cantidad utilizada."""
     if reparacion_id in (None, ""):
         raise ValueError("La reparación es obligatoria.")
     reparacion_id = int(reparacion_id)
-    vehiculo_id, asunto, pieza_id, costo, estado = _validar_datos_reparacion(
-        vehiculo_id, asunto, fecha_entrada, pieza_id, costo, estado
+    vehiculo_id, asunto, pieza_id, cantidad_pieza, costo, estado = _validar_datos_reparacion(
+        vehiculo_id, asunto, fecha_entrada, pieza_id, cantidad_pieza, costo, estado
     )
     validar_fechas_reparacion(fecha_entrada, fecha_salida)
     conexion = conectar_mysql()
     cursor = conexion.cursor()
     try:
         cursor.execute(
-            "SELECT pieza_id FROM reparaciones WHERE id = %s",
+            "SELECT pieza_id, cantidad_pieza FROM reparaciones WHERE id = %s",
             (reparacion_id,),
         )
         reparacion_actual = cursor.fetchone()
         pieza_actual = reparacion_actual[0] if reparacion_actual else None
+        cantidad_actual = int(reparacion_actual[1]) if reparacion_actual else 0
 
         cursor.execute(
             """UPDATE reparaciones SET vehiculo_id = %s, asunto = %s,
-               fecha_entrada = %s, fecha_salida = %s, pieza_id = %s,
+               fecha_entrada = %s, fecha_salida = %s, pieza_id = %s, cantidad_pieza = %s,
                costo = %s, estado = %s WHERE id = %s""",
             (
                 vehiculo_id,
@@ -140,6 +158,7 @@ def actualizar_reparacion(
                 fecha_entrada,
                 fecha_salida or None,
                 pieza_id,
+                cantidad_pieza,
                 costo,
                 estado,
                 reparacion_id,
@@ -151,12 +170,21 @@ def actualizar_reparacion(
                 conexion.rollback()
                 return False
 
-        if pieza_actual != pieza_id:
-            if pieza_id is not None and not descontar_stock_pieza_en_cursor(cursor, pieza_id, 1):
+        if pieza_actual == pieza_id:
+            diferencia_cantidad = cantidad_pieza - cantidad_actual
+            if diferencia_cantidad > 0 and not descontar_stock_pieza_en_cursor(
+                cursor, pieza_id, diferencia_cantidad
+            ):
+                conexion.rollback()
+                return None
+            if diferencia_cantidad < 0:
+                devolver_stock_pieza_en_cursor(cursor, pieza_actual, -diferencia_cantidad)
+        else:
+            if not descontar_stock_pieza_en_cursor(cursor, pieza_id, cantidad_pieza):
                 conexion.rollback()
                 return None
             if pieza_actual is not None:
-                devolver_stock_pieza_en_cursor(cursor, pieza_actual, 1)
+                devolver_stock_pieza_en_cursor(cursor, pieza_actual, cantidad_actual)
 
         conexion.commit()
         return True
@@ -176,10 +204,13 @@ def eliminar_reparacion(reparacion_id):
     conexion = conectar_mysql()
     cursor = conexion.cursor()
     try:
-        cursor.execute("SELECT pieza_id FROM reparaciones WHERE id = %s", (reparacion_id,))
+        cursor.execute(
+            "SELECT pieza_id, cantidad_pieza FROM reparaciones WHERE id = %s",
+            (reparacion_id,),
+        )
         pieza = cursor.fetchone()
         if pieza and pieza[0] is not None:
-            devolver_stock_pieza_en_cursor(cursor, pieza[0], 1)
+            devolver_stock_pieza_en_cursor(cursor, pieza[0], int(pieza[1]))
 
         cursor.execute("DELETE FROM reparaciones WHERE id = %s", (reparacion_id,))
         if cursor.rowcount == 0:
@@ -202,7 +233,7 @@ def cargar_reparaciones():
     try:
         cursor.execute(
             """SELECT id, vehiculo_id, asunto, fecha_entrada, fecha_salida,
-                      pieza_id, costo, estado
+                      pieza_id, cantidad_pieza, costo, estado
                FROM reparaciones ORDER BY id"""
         )
         return [

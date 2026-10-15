@@ -23,6 +23,7 @@ DATOS_REPARACION = {
         ("asunto", "   "),
         ("fecha_entrada", ""),
         ("pieza_id", None),
+        ("cantidad_pieza", None),
         ("costo", None),
         ("estado", ""),
     ],
@@ -70,6 +71,18 @@ def test_registrar_reparacion_rechaza_fecha_entrada_posterior(monkeypatch):
         reparaciones.registrar_reparacion(**datos)
 
 
+@pytest.mark.parametrize("cantidad", [0, -1, 1.5, "no válida"])
+def test_registrar_reparacion_rechaza_cantidad_no_positiva(monkeypatch, cantidad):
+    monkeypatch.setattr(
+        reparaciones,
+        "conectar_mysql",
+        lambda: pytest.fail("No debe conectarse con cantidades inválidas"),
+    )
+
+    with pytest.raises(ValueError):
+        reparaciones.registrar_reparacion(**DATOS_REPARACION, cantidad_pieza=cantidad)
+
+
 def test_actualizar_reparacion_rechaza_fecha_entrada_posterior(monkeypatch):
     monkeypatch.setattr(
         reparaciones,
@@ -83,7 +96,7 @@ def test_actualizar_reparacion_rechaza_fecha_entrada_posterior(monkeypatch):
         )
 
 
-def test_registrar_reparacion_descuenta_la_pieza_en_la_misma_transaccion(monkeypatch):
+def test_registrar_reparacion_descuenta_la_cantidad_en_la_misma_transaccion(monkeypatch):
     conexion = MagicMock()
     cursor = conexion.cursor.return_value
     cursor.fetchone.return_value = (1, 1)
@@ -92,10 +105,12 @@ def test_registrar_reparacion_descuenta_la_pieza_en_la_misma_transaccion(monkeyp
     monkeypatch.setattr(reparaciones, "conectar_mysql", lambda: conexion)
     monkeypatch.setattr(reparaciones, "descontar_stock_pieza_en_cursor", descontar)
 
-    resultado = reparaciones.registrar_reparacion(**DATOS_REPARACION)
+    resultado = reparaciones.registrar_reparacion(
+        **DATOS_REPARACION, cantidad_pieza=4
+    )
 
     assert resultado == 42
-    descontar.assert_called_once_with(cursor, 3, 1)
+    descontar.assert_called_once_with(cursor, 3, 4)
     conexion.commit.assert_called_once()
     conexion.rollback.assert_not_called()
 
@@ -118,7 +133,7 @@ def test_registrar_reparacion_revierte_si_no_hay_stock(monkeypatch):
 def test_actualizar_reparacion_descuenta_nueva_pieza_y_devuelve_anterior(monkeypatch):
     conexion = MagicMock()
     cursor = conexion.cursor.return_value
-    cursor.fetchone.return_value = (2,)
+    cursor.fetchone.return_value = (2, 3)
     cursor.rowcount = 1
     descontar = MagicMock(return_value=True)
     devolver = MagicMock(return_value=True)
@@ -127,10 +142,68 @@ def test_actualizar_reparacion_descuenta_nueva_pieza_y_devuelve_anterior(monkeyp
     monkeypatch.setattr(reparaciones, "devolver_stock_pieza_en_cursor", devolver)
 
     resultado = reparaciones.actualizar_reparacion(
-        9, 1, "Cambio de filtro", "2026-10-15", None, 3, 250, "Pendiente"
+        9, 1, "Cambio de filtro", "2026-10-15", None, 3, 250, "Pendiente", 4
     )
 
     assert resultado is True
-    descontar.assert_called_once_with(cursor, 3, 1)
-    devolver.assert_called_once_with(cursor, 2, 1)
+    descontar.assert_called_once_with(cursor, 3, 4)
+    devolver.assert_called_once_with(cursor, 2, 3)
+    conexion.commit.assert_called_once()
+
+
+def test_actualizar_reparacion_misma_pieza_ajusta_solo_la_diferencia(monkeypatch):
+    conexion = MagicMock()
+    cursor = conexion.cursor.return_value
+    cursor.fetchone.return_value = (3, 2)
+    cursor.rowcount = 1
+    descontar = MagicMock(return_value=True)
+    devolver = MagicMock(return_value=True)
+    monkeypatch.setattr(reparaciones, "conectar_mysql", lambda: conexion)
+    monkeypatch.setattr(reparaciones, "descontar_stock_pieza_en_cursor", descontar)
+    monkeypatch.setattr(reparaciones, "devolver_stock_pieza_en_cursor", devolver)
+
+    resultado = reparaciones.actualizar_reparacion(
+        9, 1, "Cambio de filtro", "2026-10-15", None, 3, 250, "Pendiente", 5
+    )
+
+    assert resultado is True
+    descontar.assert_called_once_with(cursor, 3, 3)
+    devolver.assert_not_called()
+    conexion.commit.assert_called_once()
+
+
+def test_actualizar_reparacion_misma_pieza_devuelve_la_diferencia(monkeypatch):
+    conexion = MagicMock()
+    cursor = conexion.cursor.return_value
+    cursor.fetchone.return_value = (3, 5)
+    cursor.rowcount = 1
+    descontar = MagicMock(return_value=True)
+    devolver = MagicMock(return_value=True)
+    monkeypatch.setattr(reparaciones, "conectar_mysql", lambda: conexion)
+    monkeypatch.setattr(reparaciones, "descontar_stock_pieza_en_cursor", descontar)
+    monkeypatch.setattr(reparaciones, "devolver_stock_pieza_en_cursor", devolver)
+
+    resultado = reparaciones.actualizar_reparacion(
+        9, 1, "Cambio de filtro", "2026-10-15", None, 3, 250, "Pendiente", 2
+    )
+
+    assert resultado is True
+    descontar.assert_not_called()
+    devolver.assert_called_once_with(cursor, 3, 3)
+    conexion.commit.assert_called_once()
+
+
+def test_eliminar_reparacion_devuelve_todas_las_piezas_usadas(monkeypatch):
+    conexion = MagicMock()
+    cursor = conexion.cursor.return_value
+    cursor.fetchone.return_value = (3, 4)
+    cursor.rowcount = 1
+    devolver = MagicMock(return_value=True)
+    monkeypatch.setattr(reparaciones, "conectar_mysql", lambda: conexion)
+    monkeypatch.setattr(reparaciones, "devolver_stock_pieza_en_cursor", devolver)
+
+    resultado = reparaciones.eliminar_reparacion(9)
+
+    assert resultado is True
+    devolver.assert_called_once_with(cursor, 3, 4)
     conexion.commit.assert_called_once()

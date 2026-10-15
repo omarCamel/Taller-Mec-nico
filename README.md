@@ -8,7 +8,7 @@ Este sistema permite registrar clientes, vehículos, piezas, usuarios y reparaci
 ## Funcionalidades principales
 - Registro y consulta de clientes.
 - Gestión de vehículos asociados a cada cliente.
-- Control de piezas y materiales usados en reparaciones.
+- Control de piezas y materiales con cantidad utilizada y ajuste automático del inventario.
 - Administración de usuarios y permisos.
 - Registro de reparaciones, costos y estados.
 - Estructura preparada para pruebas automatizadas.

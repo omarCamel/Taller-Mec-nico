@@ -144,6 +144,7 @@ def inicializar_base_datos():
             fecha_entrada DATE NOT NULL,
             fecha_salida DATE NULL,
             pieza_id INT NULL,
+            cantidad_pieza INT NOT NULL DEFAULT 1,
             costo DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
             estado VARCHAR(30) NOT NULL DEFAULT 'Pendiente',
             CONSTRAINT fk_reparacion_vehiculo FOREIGN KEY (vehiculo_id)
@@ -201,6 +202,7 @@ def inicializar_base_datos():
         ("fecha_entrada", "DATE", "NULL"),
         ("fecha_salida", "DATE", "NULL"),
         ("pieza_id", "INT", "NULL"),
+        ("cantidad_pieza", "INT NOT NULL", "1"),
     ):
         if nombre_columna not in columnas_reparaciones:
             cursor.execute(
@@ -505,8 +507,16 @@ class TallerApp:
         self.txt_reparacion_asunto = ttk.Entry(frame_reparaciones)
         self.txt_reparacion_asunto.grid(row=4, column=3, sticky="ew", padx=5, pady=4)
 
+        tk.Label(frame_reparaciones, text="Cantidad de piezas:").grid(
+            row=5, column=0, sticky="e", padx=5, pady=4
+        )
+        self.txt_reparacion_cantidad_pieza = ttk.Entry(frame_reparaciones)
+        self.txt_reparacion_cantidad_pieza.grid(
+            row=5, column=1, sticky="ew", padx=5, pady=4
+        )
+
         acciones_reparaciones = ttk.Frame(frame_reparaciones)
-        acciones_reparaciones.grid(row=5, column=0, columnspan=4, pady=8)
+        acciones_reparaciones.grid(row=6, column=0, columnspan=4, pady=8)
         ttk.Button(acciones_reparaciones, text="Registrar", command=self.registrar_reparacion).pack(side="left", padx=3)
         ttk.Button(acciones_reparaciones, text="Actualizar", command=self.actualizar_reparacion_form).pack(side="left", padx=3)
         ttk.Button(acciones_reparaciones, text="Borrar", command=self.borrar_reparacion_form).pack(side="left", padx=3)
@@ -1090,13 +1100,22 @@ class TallerApp:
         fecha_entrada = self.txt_reparacion_fecha_entrada.get().strip()
         fecha_salida = self.txt_reparacion_fecha_salida.get().strip() or None
         costo = self.txt_reparacion_costo.get().strip()
+        cantidad_pieza = self.txt_reparacion_cantidad_pieza.get().strip()
         estado = self.combo_reparacion_estado.get().strip()
         pieza_seleccionada = self.combo_reparacion_pieza.get().strip()
 
-        if not vehiculo_id or not asunto or not fecha_entrada or not costo or not estado or not pieza_seleccionada:
+        if (
+            not vehiculo_id
+            or not asunto
+            or not fecha_entrada
+            or not costo
+            or not cantidad_pieza
+            or not estado
+            or not pieza_seleccionada
+        ):
             messagebox.showerror(
                 "Error",
-                "Vehículo, asunto, fecha de entrada, pieza, costo y estado son obligatorios",
+                "Vehículo, asunto, fecha de entrada, pieza, cantidad, costo y estado son obligatorios",
             )
             return
 
@@ -1115,12 +1134,25 @@ class TallerApp:
 
         try:
             costo = float(costo)
+            cantidad_pieza = int(cantidad_pieza)
         except ValueError:
-            messagebox.showerror("Error", "El costo debe ser un número válido")
+            messagebox.showerror(
+                "Error", "La cantidad debe ser un entero y el costo debe ser numérico"
+            )
+            return
+        if cantidad_pieza < 1:
+            messagebox.showerror("Error", "La cantidad de piezas debe ser un entero positivo")
             return
 
         reparacion_id = registrar_reparacion(
-            int(vehiculo_id), asunto, fecha_entrada, pieza_id, fecha_salida, costo, estado
+            int(vehiculo_id),
+            asunto,
+            fecha_entrada,
+            pieza_id,
+            fecha_salida,
+            costo,
+            estado,
+            cantidad_pieza,
         )
         if reparacion_id is None:
             messagebox.showwarning(
@@ -1130,7 +1162,19 @@ class TallerApp:
             return
 
         self.actualizar_reparaciones()
-        self.mostrar_datos_reparacion((reparacion_id, int(vehiculo_id), asunto, fecha_entrada, fecha_salida, pieza_id, str(costo), estado))
+        self.mostrar_datos_reparacion(
+            (
+                reparacion_id,
+                int(vehiculo_id),
+                asunto,
+                fecha_entrada,
+                fecha_salida,
+                pieza_id,
+                cantidad_pieza,
+                str(costo),
+                estado,
+            )
+        )
         messagebox.showinfo("Éxito", f"Reparación registrada con ID {reparacion_id}")
 
     @requiere_permiso("Reparaciones", "actualizar")
@@ -1141,16 +1185,25 @@ class TallerApp:
         fecha_entrada = self.txt_reparacion_fecha_entrada.get().strip()
         fecha_salida = self.txt_reparacion_fecha_salida.get().strip() or None
         costo = self.txt_reparacion_costo.get().strip()
+        cantidad_pieza = self.txt_reparacion_cantidad_pieza.get().strip()
         estado = self.combo_reparacion_estado.get().strip()
         pieza_seleccionada = self.combo_reparacion_pieza.get().strip()
 
         if not reparacion_id:
             messagebox.showwarning("Selecciona una reparación", "Busca primero la reparación que deseas actualizar")
             return
-        if not vehiculo_id or not asunto or not fecha_entrada or not costo or not estado or not pieza_seleccionada:
+        if (
+            not vehiculo_id
+            or not asunto
+            or not fecha_entrada
+            or not costo
+            or not cantidad_pieza
+            or not estado
+            or not pieza_seleccionada
+        ):
             messagebox.showerror(
                 "Error",
-                "Vehículo, asunto, fecha de entrada, pieza, costo y estado son obligatorios",
+                "Vehículo, asunto, fecha de entrada, pieza, cantidad, costo y estado son obligatorios",
             )
             return
 
@@ -1169,12 +1222,26 @@ class TallerApp:
 
         try:
             costo = float(costo)
+            cantidad_pieza = int(cantidad_pieza)
         except ValueError:
-            messagebox.showerror("Error", "El costo debe ser un número válido")
+            messagebox.showerror(
+                "Error", "La cantidad debe ser un entero y el costo debe ser numérico"
+            )
+            return
+        if cantidad_pieza < 1:
+            messagebox.showerror("Error", "La cantidad de piezas debe ser un entero positivo")
             return
 
         resultado = actualizar_reparacion(
-            int(reparacion_id), int(vehiculo_id), asunto, fecha_entrada, fecha_salida, pieza_id, costo, estado
+            int(reparacion_id),
+            int(vehiculo_id),
+            asunto,
+            fecha_entrada,
+            fecha_salida,
+            pieza_id,
+            costo,
+            estado,
+            cantidad_pieza,
         )
         if resultado is None:
             messagebox.showwarning("Inventario", "La pieza seleccionada ya no tiene stock disponible.")
@@ -1185,7 +1252,19 @@ class TallerApp:
             return
 
         self.actualizar_reparaciones()
-        self.mostrar_datos_reparacion((int(reparacion_id), int(vehiculo_id), asunto, fecha_entrada, fecha_salida, pieza_id, str(costo), estado))
+        self.mostrar_datos_reparacion(
+            (
+                int(reparacion_id),
+                int(vehiculo_id),
+                asunto,
+                fecha_entrada,
+                fecha_salida,
+                pieza_id,
+                cantidad_pieza,
+                str(costo),
+                estado,
+            )
+        )
         messagebox.showinfo("Éxito", "Reparación actualizada correctamente")
 
     @requiere_permiso("Reparaciones", "borrar")
@@ -1229,7 +1308,17 @@ class TallerApp:
 
         encontrados = []
         for reparacion in cargar_reparaciones():
-            reparacion_id, vehiculo_id, asunto, fecha_entrada, fecha_salida, pieza_id, costo, estado = reparacion
+            (
+                reparacion_id,
+                vehiculo_id,
+                asunto,
+                fecha_entrada,
+                fecha_salida,
+                pieza_id,
+                cantidad_pieza,
+                costo,
+                estado,
+            ) = reparacion
             if not vehiculo_id:
                 continue
             nombre_vehiculo = ""
@@ -1237,9 +1326,20 @@ class TallerApp:
                 nombre_vehiculo = f"{self.vehiculos[int(vehiculo_id)]['matricula']} {self.vehiculos[int(vehiculo_id)]['marca']} {self.vehiculos[int(vehiculo_id)]['modelo']}"
             if coincide_busqueda(
                 consulta,
-                (reparacion_id, vehiculo_id, asunto, fecha_entrada, fecha_salida, pieza_id, costo, estado, nombre_vehiculo),
+                (
+                    reparacion_id,
+                    vehiculo_id,
+                    asunto,
+                    fecha_entrada,
+                    fecha_salida,
+                    pieza_id,
+                    cantidad_pieza,
+                    costo,
+                    estado,
+                    nombre_vehiculo,
+                ),
             ):
-                encontrados.append((reparacion_id, vehiculo_id, asunto, fecha_entrada, fecha_salida, pieza_id, costo, estado))
+                encontrados.append(reparacion)
 
         if not encontrados:
             messagebox.showinfo("Sin coincidencias", "No se encontró ninguna reparación con esos datos.")
@@ -1254,7 +1354,17 @@ class TallerApp:
             )
 
     def mostrar_datos_reparacion(self, datos):
-        reparacion_id, vehiculo_id, asunto, fecha_entrada, fecha_salida, pieza_id, costo, estado = datos
+        (
+            reparacion_id,
+            vehiculo_id,
+            asunto,
+            fecha_entrada,
+            fecha_salida,
+            pieza_id,
+            cantidad_pieza,
+            costo,
+            estado,
+        ) = datos
         self.txt_reparacion_id.configure(state="normal")
         self.txt_reparacion_id.delete(0, tk.END)
         self.txt_reparacion_id.insert(0, str(reparacion_id))
@@ -1286,6 +1396,8 @@ class TallerApp:
         self.txt_reparacion_fecha_salida.insert(0, fecha_salida or "")
         self.txt_reparacion_costo.delete(0, tk.END)
         self.txt_reparacion_costo.insert(0, str(costo))
+        self.txt_reparacion_cantidad_pieza.delete(0, tk.END)
+        self.txt_reparacion_cantidad_pieza.insert(0, str(cantidad_pieza))
         self.combo_reparacion_estado.set(estado)
         self.txt_reparacion_asunto.delete(0, tk.END)
         self.txt_reparacion_asunto.insert(0, asunto)
@@ -1303,6 +1415,7 @@ class TallerApp:
         self.txt_reparacion_fecha_entrada.delete(0, tk.END)
         self.txt_reparacion_fecha_salida.delete(0, tk.END)
         self.txt_reparacion_costo.delete(0, tk.END)
+        self.txt_reparacion_cantidad_pieza.delete(0, tk.END)
         self.txt_reparacion_asunto.delete(0, tk.END)
 
     def cancelar_reparacion(self):
