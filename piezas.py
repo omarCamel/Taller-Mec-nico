@@ -140,15 +140,23 @@ def descontar_stock_pieza(pieza_id, cantidad=1):
     conexion = conectar_mysql()
     cursor = conexion.cursor()
     try:
-        cursor.execute(
-            "UPDATE piezas SET stock = GREATEST(stock - %s, 0) WHERE id = %s",
-            (cantidad, pieza_id),
-        )
+        resultado = descontar_stock_pieza_en_cursor(cursor, pieza_id, cantidad)
         conexion.commit()
-        return cursor.rowcount > 0
+        return resultado
     finally:
         cursor.close()
         conexion.close()
+
+
+def descontar_stock_pieza_en_cursor(cursor, pieza_id, cantidad=1):
+    """Descuenta existencias dentro de la transacción del cursor recibido."""
+    cantidad = _validar_cantidad(cantidad)
+    cursor.execute(
+        """UPDATE piezas SET stock = stock - %s
+           WHERE id = %s AND stock >= %s""",
+        (cantidad, pieza_id, cantidad),
+    )
+    return cursor.rowcount > 0
 
 
 def devolver_stock_pieza(pieza_id, cantidad=1):
@@ -157,15 +165,22 @@ def devolver_stock_pieza(pieza_id, cantidad=1):
     conexion = conectar_mysql()
     cursor = conexion.cursor()
     try:
-        cursor.execute(
-            "UPDATE piezas SET stock = stock + %s WHERE id = %s",
-            (cantidad, pieza_id),
-        )
+        resultado = devolver_stock_pieza_en_cursor(cursor, pieza_id, cantidad)
         conexion.commit()
-        return cursor.rowcount > 0
+        return resultado
     finally:
         cursor.close()
         conexion.close()
+
+
+def devolver_stock_pieza_en_cursor(cursor, pieza_id, cantidad=1):
+    """Devuelve existencias dentro de la transacción del cursor recibido."""
+    cantidad = _validar_cantidad(cantidad)
+    cursor.execute(
+        "UPDATE piezas SET stock = stock + %s WHERE id = %s",
+        (cantidad, pieza_id),
+    )
+    return cursor.rowcount > 0
 
 
 def cargar_piezas():

@@ -3,7 +3,7 @@ from datetime import date
 import mysql.connector
 
 from database import conectar_mysql
-from piezas import descontar_stock_pieza, devolver_stock_pieza, pieza_en_existencia
+from piezas import descontar_stock_pieza_en_cursor, devolver_stock_pieza_en_cursor
 
 
 ESTADOS_REPARACION = ("Pendiente", "En proceso", "Completada", "Cancelada")
@@ -32,8 +32,7 @@ def registrar_reparacion(
 ):
     """Registra una reparación asociada a un vehículo y a una pieza en existencia."""
     validar_fechas_reparacion(fecha_entrada, fecha_salida)
-    if pieza_id not in (None, "") and not pieza_en_existencia(pieza_id):
-        return None
+    pieza_id = int(pieza_id) if pieza_id not in (None, "") else None
 
     conexion = conectar_mysql()
     cursor = conexion.cursor()
@@ -44,6 +43,7 @@ def registrar_reparacion(
         )
         hay_vehiculos, hay_piezas_disponibles = cursor.fetchone()
         if not hay_vehiculos or not hay_piezas_disponibles:
+            conexion.rollback()
             return None
 
         cursor.execute(
@@ -55,18 +55,22 @@ def registrar_reparacion(
                 asunto.strip(),
                 fecha_entrada,
                 fecha_salida or None,
-                pieza_id if pieza_id not in (None, "") else None,
+                pieza_id,
                 costo,
                 estado,
             ),
         )
-        if pieza_id not in (None, ""):
-            descontar_stock_pieza(pieza_id, 1)
+        if pieza_id is not None and not descontar_stock_pieza_en_cursor(cursor, pieza_id, 1):
+            conexion.rollback()
+            return None
         conexion.commit()
         return cursor.lastrowid
     except mysql.connector.IntegrityError:
         conexion.rollback()
         return None
+    except mysql.connector.Error:
+        conexion.rollback()
+        raise
     finally:
         cursor.close()
         conexion.close()
@@ -84,6 +88,7 @@ def actualizar_reparacion(
 ):
     """Actualiza los datos de una reparación y ajusa el stock de la pieza usada."""
     validar_fechas_reparacion(fecha_entrada, fecha_salida)
+    pieza_id = int(pieza_id) if pieza_id not in (None, "") else None
     conexion = conectar_mysql()
     cursor = conexion.cursor()
     try:
@@ -94,10 +99,6 @@ def actualizar_reparacion(
         reparacion_actual = cursor.fetchone()
         pieza_actual = reparacion_actual[0] if reparacion_actual else None
 
-        if pieza_id not in (None, ""):
-            if pieza_actual != pieza_id and not pieza_en_existencia(pieza_id):
-                return None
-
         cursor.execute(
             """UPDATE reparaciones SET vehiculo_id = %s, asunto = %s,
                fecha_entrada = %s, fecha_salida = %s, pieza_id = %s,
@@ -107,7 +108,7 @@ def actualizar_reparacion(
                 asunto.strip(),
                 fecha_entrada,
                 fecha_salida or None,
-                pieza_id if pieza_id not in (None, "") else None,
+                pieza_id,
                 costo,
                 estado,
                 reparacion_id,
@@ -119,16 +120,21 @@ def actualizar_reparacion(
                 conexion.rollback()
                 return False
 
-        if pieza_actual and pieza_actual != pieza_id:
-            devolver_stock_pieza(pieza_actual, 1)
-        if pieza_id not in (None, "") and pieza_actual != pieza_id:
-            descontar_stock_pieza(pieza_id, 1)
+        if pieza_actual != pieza_id:
+            if pieza_id is not None and not descontar_stock_pieza_en_cursor(cursor, pieza_id, 1):
+                conexion.rollback()
+                return None
+            if pieza_actual is not None:
+                devolver_stock_pieza_en_cursor(cursor, pieza_actual, 1)
 
         conexion.commit()
         return True
     except mysql.connector.IntegrityError:
         conexion.rollback()
         return False
+    except mysql.connector.Error:
+        conexion.rollback()
+        raise
     finally:
         cursor.close()
         conexion.close()
@@ -142,7 +148,7 @@ def eliminar_reparacion(reparacion_id):
         cursor.execute("SELECT pieza_id FROM reparaciones WHERE id = %s", (reparacion_id,))
         pieza = cursor.fetchone()
         if pieza and pieza[0] is not None:
-            devolver_stock_pieza(pieza[0], 1)
+            devolver_stock_pieza_en_cursor(cursor, pieza[0], 1)
 
         cursor.execute("DELETE FROM reparaciones WHERE id = %s", (reparacion_id,))
         if cursor.rowcount == 0:
@@ -150,6 +156,9 @@ def eliminar_reparacion(reparacion_id):
             return False
         conexion.commit()
         return True
+    except mysql.connector.Error:
+        conexion.rollback()
+        raise
     finally:
         cursor.close()
         conexion.close()

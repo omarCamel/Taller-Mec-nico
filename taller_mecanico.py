@@ -15,7 +15,6 @@ from piezas import (
     actualizar_pieza,
     cargar_piezas,
     eliminar_pieza,
-    pieza_en_existencia,
     registrar_pieza,
 )
 from reparaciones import (
@@ -119,7 +118,7 @@ def inicializar_base_datos():
                 REFERENCES vehiculos(id),
             CONSTRAINT fk_reparacion_pieza FOREIGN KEY (pieza_id)
                 REFERENCES piezas(id)
-        ) ENGINE=InnoDB""",
+        ) ENGINE=InnoDB AUTO_INCREMENT=1""",
         """CREATE TABLE IF NOT EXISTS reparacion_piezas (
             reparacion_id INT NOT NULL,
             pieza_id INT NOT NULL,
@@ -160,6 +159,7 @@ def inicializar_base_datos():
             cursor.execute(
                 f"ALTER TABLE reparaciones ADD COLUMN {nombre_columna} {tipo} DEFAULT {valor_predeterminado}"
             )
+    cursor.execute("ALTER TABLE reparaciones AUTO_INCREMENT = 1")
     conexion.commit()
     cursor.close()
     conexion.close()
@@ -1016,8 +1016,8 @@ class TallerApp:
         pieza_id = None
         if pieza_seleccionada:
             pieza_id = next((pieza[0] for pieza in self.piezas if pieza[1] == pieza_seleccionada), None)
-            if pieza_id is None or not pieza_en_existencia(int(pieza_id)):
-                messagebox.showwarning("Inventario", "La pieza seleccionada no está disponible en existencia")
+            if pieza_id is None:
+                messagebox.showwarning("Inventario", "La pieza seleccionada ya no está disponible")
                 return
 
         try:
@@ -1063,8 +1063,8 @@ class TallerApp:
         pieza_id = None
         if pieza_seleccionada:
             pieza_id = next((pieza[0] for pieza in self.piezas if pieza[1] == pieza_seleccionada), None)
-            if pieza_id is None or not pieza_en_existencia(int(pieza_id)):
-                messagebox.showwarning("Inventario", "La pieza seleccionada no está disponible en existencia")
+            if pieza_id is None:
+                messagebox.showwarning("Inventario", "La pieza seleccionada ya no está disponible")
                 return
 
         try:
@@ -1076,6 +1076,9 @@ class TallerApp:
         resultado = actualizar_reparacion(
             int(reparacion_id), int(vehiculo_id), asunto, fecha_entrada, fecha_salida, pieza_id, costo, estado
         )
+        if resultado is None:
+            messagebox.showwarning("Inventario", "La pieza seleccionada ya no tiene stock disponible.")
+            return
         if not resultado:
             messagebox.showerror("Error", "La reparación ya no existe en la base de datos")
             self.cancelar_reparacion()
